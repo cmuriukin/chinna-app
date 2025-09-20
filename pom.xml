@@ -25,4 +25,8 @@
     </plugins>
     <finalName>hiring</finalName>
   </build>
+  <properties>
+    <sonar.host.url>http://18.116.98.55:9000</sonar.host.url>
+  </properties>
+
 </project>
