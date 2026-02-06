@@ -2,39 +2,65 @@ pipeline {
     agent any
 
     stages {
-        
-        stage('Maven Build') {
+        stage('Stage 1: Checkout the repository') {
             steps {
-                sh "mvn clean package"
+                git url: 'https://github.com/cmuriukin/chinna-app.git', branch: 'feature_class_25'
             }
         }
-        
-        stage('Docker Build') {
+        stage('Stage 2: Maven Build') {
             steps {
-                sh "docker build . -t chinnareddaiah/hiring:${commit_id()}"
+                sh 'mvn clean package'
             }
         }
-        stage('Docker Push') {
+        stage('Stage 3: SonarQube Scanning') {
             steps {
-                withCredentials([string(credentialsId: 'docker-hub', variable: 'hubPwd')]) {
-                    sh "docker login -u chinnareddaiah -p ${hubPwd}"
-                    sh "docker push chinnareddaiah/hiring:${commit_id()}"
+                withSonarQubeEnv(installationName: 'sonarqube', credentialsId: 'hiring_token') {
+                sh 'mvn sonar:sonar'
                 }
             }
         }
-        stage('Docker Deploy') {
+        stage('Stage 4: Upload Artifacts to Nexus') {
             steps {
-                sshagent(['docker-host']) {
-                    sh "ssh -o StrictHostKeyChecking=no  ec2-user@172.31.36.37 docker rm -f hiring"
-                    sh "ssh  ec2-user@172.31.36.37 docker run -d -p 8080:8080 --name hiring chinnareddaiah/hiring:${commit_id()}"
+                nexusArtifactUploader artifacts:[
+                    [artifactId: 'hiring',
+                    classifier: '',
+                    file: 'target/hiring.war',
+                    type: 'war']
+                    ],
+                    credentialsId: 'nexus',
+                    groupId: 'in.javahome',
+                    nexusUrl: '13.40.221.25:8081',
+                    nexusVersion: 'nexus3',
+                    protocol: 'http',
+                    repository: 'hiring',
+                    version: '0.2'
+            }
+        }
+        stage('Stage 5: SonarQube Scanning') {
+            steps {
+                sshagent(['sshkey']) {
+                    // opt to use curl/wget to doenload artifact directly from Nexus link into the container
+                sh """
+                scp -o StrictHostKeyChecking=no target/*.war ubuntu@13.40.188.69:/home/ubuntu
+                ssh ubuntu@13.40.188.69 "docker cp /home/ubuntu/*.war tomcat-server://bitnami/tomcat/webapps/hiring.war"
+                """
                 }
             }
         }
-
     }
+post {
+  success {
+    slackSend channel: 'devops-team', 
+    color: 'good', 
+    message: "Pipeline build number $BUILD_NUMBER run seccessfully", 
+    tokenCredentialId: 'slack_id'
+  }
+  failure {
+    slackSend channel: 'devops-team', 
+    color: 'danger', 
+    message: "Pipeline build number $BUILD_NUMBER did not succeed", 
+    tokenCredentialId: 'slack_id'
+  }
 }
 
-def commit_id(){
-    id = sh returnStdout: true, script: 'git rev-parse HEAD'
-    return id
 }
